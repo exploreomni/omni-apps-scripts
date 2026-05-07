@@ -10,20 +10,28 @@
  *
  * Per-pull config: edit a row in the "OmniSync" sheet (auto-created on first run):
  *
- *   | sheet  | cell | dashboard_id          | tile          | include_headers |
- *   | Sales  | A1   | 1a2b3c4d-...          | Revenue by Mo | TRUE            |
+ *   | sheet | cell | dashboard_id | tile | include_headers | dashboard_url | last_synced_at | last_status |
+ *   | Sales | A1   | 1a2b3c4d-... | Rev. | TRUE            | (auto)        | (auto)         | (auto)      |
  *
+ *   Inputs:
  *   - sheet:           target sheet name (created if missing)
  *   - cell:            top-left anchor for the paste, e.g. "A1" or "C5"
  *   - dashboard_id:    Omni document ID (UUID from the dashboard URL)
  *   - tile:            tile title as shown on the dashboard
  *   - include_headers: TRUE to write column headers as the first row
  *
+ *   Outputs (written by the script after each sync, leave blank):
+ *   - dashboard_url:   HYPERLINK formula pointing back to the dashboard
+ *   - last_synced_at:  timestamp of the last attempt
+ *   - last_status:     "OK" on success, otherwise the error message
+ *
  * Run via the Omni menu, or call syncAll() / syncRow(rowNumber) directly.
  */
 
 const CONFIG_SHEET = 'OmniSync';
-const CONFIG_HEADERS = ['sheet', 'cell', 'dashboard_id', 'tile', 'include_headers'];
+const INPUT_HEADERS = ['sheet', 'cell', 'dashboard_id', 'tile', 'include_headers'];
+const OUTPUT_HEADERS = ['dashboard_url', 'last_synced_at', 'last_status'];
+const CONFIG_HEADERS = INPUT_HEADERS.concat(OUTPUT_HEADERS);
 
 function onOpen() {
   SpreadsheetApp.getUi()
@@ -42,18 +50,37 @@ function ensureConfigSheet() {
     sheet = ss.insertSheet(CONFIG_SHEET);
     sheet.getRange(1, 1, 1, CONFIG_HEADERS.length).setValues([CONFIG_HEADERS]).setFontWeight('bold');
     sheet.setFrozenRows(1);
+    return sheet;
+  }
+  const lastCol = Math.max(1, sheet.getLastColumn());
+  const existing = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(String);
+  const missing = CONFIG_HEADERS.filter(h => existing.indexOf(h) === -1);
+  if (missing.length) {
+    sheet.getRange(1, lastCol + 1, 1, missing.length).setValues([missing]).setFontWeight('bold');
   }
   return sheet;
 }
 
+function configColumnIndex_(sheet) {
+  const lastCol = Math.max(1, sheet.getLastColumn());
+  const headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(String);
+  const idx = {};
+  CONFIG_HEADERS.forEach(h => { idx[h] = headers.indexOf(h); });
+  return idx;
+}
+
 function syncAll() {
-  const rows = readConfigRows_();
+  const sheet = ensureConfigSheet();
+  const rows = readConfigRows_(sheet);
   if (!rows.length) {
     SpreadsheetApp.getUi().alert('No config rows found in "' + CONFIG_SHEET + '".');
     return;
   }
-  rows.forEach(r => runRow_(r));
-  SpreadsheetApp.getActive().toast('Synced ' + rows.length + ' tile(s).', 'Omni', 5);
+  let ok = 0;
+  rows.forEach(r => { if (executeRow_(sheet, r)) ok++; });
+  const errs = rows.length - ok;
+  const msg = 'Synced ' + ok + ' / ' + rows.length + ' tile(s)' + (errs ? ' — ' + errs + ' failed (see last_status)' : '');
+  SpreadsheetApp.getActive().toast(msg, 'Omni', 6);
 }
 
 function syncActiveRow() {
@@ -66,25 +93,48 @@ function syncActiveRow() {
 }
 
 function syncRow(rowNumber) {
-  const rows = readConfigRows_().filter(r => r._row === rowNumber);
-  if (!rows.length) throw new Error('No config row at row ' + rowNumber);
-  runRow_(rows[0]);
-  SpreadsheetApp.getActive().toast('Synced row ' + rowNumber, 'Omni', 5);
-}
-
-function runRow_(cfg) {
-  const query = findTileQuery_(cfg.dashboard_id, cfg.tile);
-  const result = runQueryCsv_(query);
-  writeCsvToSheet_(result, cfg.sheet, cfg.cell, cfg.include_headers);
-}
-
-function readConfigRows_() {
   const sheet = ensureConfigSheet();
+  const rows = readConfigRows_(sheet).filter(r => r._row === rowNumber);
+  if (!rows.length) throw new Error('No config row at row ' + rowNumber);
+  const ok = executeRow_(sheet, rows[0]);
+  SpreadsheetApp.getActive().toast(ok ? 'Synced row ' + rowNumber : 'Row ' + rowNumber + ' failed — see last_status', 'Omni', 6);
+}
+
+function executeRow_(sheet, cfg) {
+  try {
+    const query = findTileQuery_(cfg.dashboard_id, cfg.tile);
+    const csv = runQueryCsv_(query);
+    writeCsvToSheet_(csv, cfg.sheet, cfg.cell, cfg.include_headers);
+    writeRowStatus_(sheet, cfg, 'OK');
+    return true;
+  } catch (e) {
+    writeRowStatus_(sheet, cfg, String(e && e.message ? e.message : e));
+    return false;
+  }
+}
+
+function writeRowStatus_(sheet, cfg, status) {
+  const idx = configColumnIndex_(sheet);
+  if (idx.last_synced_at >= 0) {
+    sheet.getRange(cfg._row, idx.last_synced_at + 1).setValue(new Date());
+  }
+  if (idx.last_status >= 0) {
+    sheet.getRange(cfg._row, idx.last_status + 1).setValue(status.length > 500 ? status.slice(0, 497) + '...' : status);
+  }
+  if (idx.dashboard_url >= 0 && cfg.dashboard_id) {
+    const url = baseUrl_() + '/dashboards/' + encodeURIComponent(cfg.dashboard_id);
+    sheet.getRange(cfg._row, idx.dashboard_url + 1)
+      .setFormula('=HYPERLINK("' + url + '","Open dashboard")');
+  }
+}
+
+function readConfigRows_(sheet) {
   const values = sheet.getDataRange().getValues();
   if (values.length < 2) return [];
   const headers = values[0].map(String);
-  const idx = Object.fromEntries(CONFIG_HEADERS.map(h => [h, headers.indexOf(h)]));
-  CONFIG_HEADERS.forEach(h => {
+  const idx = {};
+  INPUT_HEADERS.forEach(h => {
+    idx[h] = headers.indexOf(h);
     if (idx[h] === -1) throw new Error('Missing column "' + h + '" in ' + CONFIG_SHEET);
   });
   const out = [];

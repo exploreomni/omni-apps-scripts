@@ -12,18 +12,28 @@
 
 ## Configure your syncs
 
-The script auto-creates an `OmniSync` tab. Each row defines one tile-to-cell mapping:
+The script auto-creates an `OmniSync` tab. Each row defines one tile-to-cell mapping. The first five columns are inputs you fill in; the last three are written by the script after each sync.
 
-| sheet  | cell | dashboard_id  | tile             | include_headers |
-|--------|------|---------------|------------------|-----------------|
-| Sales  | A1   | 1a2b3c4d-...  | Revenue by Month | TRUE            |
-| Funnel | C5   | 9f8e7d6c-...  | Top accounts     | FALSE           |
+| sheet  | cell | dashboard_id | tile             | include_headers | dashboard_url | last_synced_at | last_status |
+|--------|------|--------------|------------------|-----------------|---------------|----------------|-------------|
+| Sales  | A1   | 1a2b3c4d-... | Revenue by Month | TRUE            | _(auto)_      | _(auto)_       | _(auto)_    |
+| Funnel | C5   | 9f8e7d6c-... | Top accounts     | FALSE           | _(auto)_      | _(auto)_       | _(auto)_    |
+
+**Inputs**
 
 - `sheet` — target sheet name (created if missing)
 - `cell` — top-left anchor for the paste (e.g. `A1`, `C5`)
 - `dashboard_id` — Omni document ID (the UUID in the dashboard URL)
 - `tile` — tile title as shown on the dashboard
 - `include_headers` — `TRUE` writes column headers as the first row
+
+**Outputs (leave blank — overwritten on each sync)**
+
+- `dashboard_url` — clickable `HYPERLINK` back to the source dashboard
+- `last_synced_at` — timestamp of the most recent attempt
+- `last_status` — `OK` on success, otherwise the error message (truncated to 500 chars)
+
+If you've used a previous version of this script, the new output columns are added automatically the next time you run a sync — no manual migration needed.
 
 ## Run
 
@@ -40,6 +50,8 @@ The script auto-creates an `OmniSync` tab. Each row defines one tile-to-cell map
 5. Parse the CSV and write it to the target cell
 
 ## Troubleshooting
+
+When a sync fails, the row's `last_status` column contains the error and `last_synced_at` contains the time it happened — `syncAll` records errors per-row and continues, so one bad config row won't stop the rest.
 
 - **`Tile "..." not found. Available: ...`** — the tile title in the config doesn't match. Use a value from the `Available:` list.
 - **`Set OMNI_BASE_URL in Script Properties`** — add Script Properties under Project Settings.
