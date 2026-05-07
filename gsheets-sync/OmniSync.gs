@@ -116,7 +116,9 @@ function executeRow_(sheet, cfg) {
 function writeRowStatus_(sheet, cfg, status) {
   const idx = configColumnIndex_(sheet);
   if (idx.last_synced_at >= 0) {
-    sheet.getRange(cfg._row, idx.last_synced_at + 1).setValue(new Date());
+    sheet.getRange(cfg._row, idx.last_synced_at + 1)
+      .setValue(new Date())
+      .setNumberFormat('yyyy-mm-dd hh:mm:ss');
   }
   if (idx.last_status >= 0) {
     sheet.getRange(cfg._row, idx.last_status + 1).setValue(status.length > 500 ? status.slice(0, 497) + '...' : status);
