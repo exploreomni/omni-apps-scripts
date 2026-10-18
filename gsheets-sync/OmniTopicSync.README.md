@@ -26,7 +26,7 @@ Topic access in Omni is defined **in the model**, keyed off **user attributes** 
 ```yaml
 access_grants:
   media_team:
-    user_attribute: gsheet_demo_dept
+    user_attribute: department
     allowed_values: [media]
 ```
 
@@ -76,9 +76,9 @@ Because an inaccessible candidate list returns 422 rather than echoing the name 
 
 ### Verified against a real restricted user
 
-With two grants declared (`media_team`, `ecommerce_team`) keyed to a `gsheet_demo_dept` attribute:
+With two grants declared (`media_team`, `ecommerce_team`) keyed to a `department` attribute:
 
-| User | `streaming`<br>needs `media_team` | `oi_atl`<br>needs `ecommerce_team` | `world_cup`<br>`[]` | `ecomm`<br>no grants |
+| User | topic needing<br>`media_team` | topic needing<br>`ecommerce_team` | topic with<br>`required_access_grants: []` | topic with<br>no grants declared |
 |---|---|---|---|---|
 | test user, `dept=media` | **ALLOW** | **DENY** | ALLOW | ALLOW |
 | a user with no `dept` value | **DENY** | **DENY** | ALLOW | ALLOW |
@@ -109,10 +109,10 @@ What the fallback cannot recover is `data_type` and timeframe variants, since th
 
 | Item | Where to get it | Example |
 |------|-----------------|---------|
-| **Instance URL** | Your Omni hostname | `https://jmg.omniapp.co` |
+| **Instance URL** | Your Omni hostname | `https://yourorg.omniapp.co` |
 | **Organization API key** | Settings → API Keys (requires Organization Admin) | `omni_osk_…` |
-| **Shared model ID** | `GET /api/v1/models?modelKind=SHARED`, or the model URL in the IDE | `09ac9e6d-759b-42e0-8170-623a1c7cc6a5` |
-| **Default topic name** *(optional)* | A `.topic` file name from `GET /api/v1/models/{modelId}/yaml` | `analytics_prod_coco_demo__oi_atl_2026_sv` |
+| **Shared model ID** | `GET /api/v1/models?modelKind=SHARED`, or the model URL in the IDE | `1a2b3c4d-5e6f-7890-abcd-ef1234567890` |
+| **Default topic name** *(optional)* | A `.topic` file name from `GET /api/v1/models/{modelId}/yaml` | `analytics__order_items` |
 | **Branch ID** *(optional)* | `GET /api/v1/models?include=activeBranches` → `branches[].id` | for testing model changes pre-merge |
 
 Requirements:
@@ -124,7 +124,7 @@ Requirements:
   curl -L -X PATCH "$OMNI_BASE_URL/api/scim/v2/Users/{userId}" \
     -H "Authorization: Bearer $OMNI_API_KEY" -H "Content-Type: application/json" \
     -d '{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],
-         "Operations":[{"op":"replace","path":"urn:omni:params:1.0:UserAttribute:gsheet_demo_dept","value":"media"}]}'
+         "Operations":[{"op":"replace","path":"urn:omni:params:1.0:UserAttribute:department","value":"media"}]}'
   ```
   Creating the attribute definition itself needs Org Admin (`POST /api/v1/user-attributes`, and note `type` must be `"String"` or `"Number"` — exact casing).
 - Every person using the sheet needs an **Omni user account** whose `userName` equals their Google email. Check with:
@@ -183,10 +183,10 @@ If you prefer to pin them, add to `appsscript.json` (View → Show manifest file
 
    | Property | Required | Value |
    |----------|----------|-------|
-   | `OMNI_BASE_URL` | yes | `https://jmg.omniapp.co` |
+   | `OMNI_BASE_URL` | yes | `https://yourorg.omniapp.co` |
    | `OMNI_API_KEY` | yes | your organization API key |
-   | `OMNI_MODEL_ID` | yes | `09ac9e6d-759b-42e0-8170-623a1c7cc6a5` |
-   | `OMNI_DEFAULT_TOPIC` | no | `analytics_prod_coco_demo__oi_atl_2026_sv` |
+   | `OMNI_MODEL_ID` | yes | `1a2b3c4d-5e6f-7890-abcd-ef1234567890` |
+   | `OMNI_DEFAULT_TOPIC` | no | `analytics__order_items` |
    | `OMNI_BRANCH_ID` | no | a model branch UUID — reads that branch instead of the shared model, so you can test grants and model edits before merging |
 
 5. Reload the Sheet. An **Omni Topics** menu appears to the right of **Help**.
@@ -215,7 +215,7 @@ In the sidebar, top to bottom:
    - **+ Add filter**, choose a field, and the operator list adapts to its data type. `not` inverts any condition; `aA` makes string matching case-insensitive (on by default). For text operators other than `between`, commas separate multiple values.
    - Any `always_where_filters` / `always_having_filters` are listed read-only above the rows. Omni applies those itself; you can't change them here.
 3. **Fields** — grouped by view, collapsible. Each view header shows **(n of N selected)** so you can see at a glance where your selection sits, and the **Fields** heading carries the overall tally. Search by name, tick individually, or use **Select all** / **Clear all** / **Measures only**; group headers have their own **all** / **none**. Bulk actions respect the search box, so you can search `revenue` then click **Select all** to take just those.
-4. **Time grain** — time dimensions collapse into one row with a grain dropdown (`raw`, `date`, `week`, `month`, `quarter`, `year`) instead of one checkbox per variant. For the `oi_atl_2026_sv` topic this turns 98 checkboxes into 63 rows.
+4. **Time grain** — time dimensions collapse into one row with a grain dropdown (`raw`, `date`, `week`, `month`, `quarter`, `year`) instead of one checkbox per variant. For the example topic this turns 98 checkboxes into 63 rows.
 5. **Run & write to sheet** — runs as you and writes to the topic's `-[SOURCE]` tab. Row 1 is a run-info line (topic, your email, timestamp, row limit); row 3 is the header; data starts at row 4.
 
 ### About pre-filled filters
@@ -274,9 +274,9 @@ The payload sent to `POST /api/v1/query/run?userId=…`:
 ```json
 {
   "query": {
-    "modelId": "09ac9e6d-759b-42e0-8170-623a1c7cc6a5",
+    "modelId": "1a2b3c4d-5e6f-7890-abcd-ef1234567890",
     "table": "",
-    "join_paths_from_topic_name": "analytics_prod_coco_demo__oi_atl_2026_sv",
+    "join_paths_from_topic_name": "analytics__order_items",
     "fields": ["…__order_items.status", "…__order_items.order_count"],
     "filters": { "…__order_items.status": { "kind": "CONTAINS", "type": "string", "values": ["ship"], "case_insensitive": true } },
     "sorts": [],
@@ -352,14 +352,14 @@ To prove the scoping works you need a user who is denied something. Do it on a *
 # 1. Create the attribute the grants key off (type must be "String" or "Number")
 curl -L -X POST "$OMNI_BASE_URL/api/v1/user-attributes" \
   -H "Authorization: Bearer $OMNI_API_KEY" -H "Content-Type: application/json" \
-  -d '{"name":"gsheet_demo_dept","label":"GSheet Demo Dept","type":"String"}'
+  -d '{"name":"department","label":"Department","type":"String"}'
 
 # 2. Create a test user holding one value
 curl -L -X POST "$OMNI_BASE_URL/api/scim/v2/Users" \
   -H "Authorization: Bearer $OMNI_API_KEY" -H "Content-Type: application/json" \
   -d '{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User","urn:omni:params:1.0:UserAttribute"],
-       "userName":"gsheet-topic-test@omni.co","displayName":"GSheet Topic Test","active":true,
-       "urn:omni:params:1.0:UserAttribute":{"gsheet_demo_dept":"media"}}'
+       "userName":"topic-access-test@yourorg.com","displayName":"Topic Access Test","active":true,
+       "urn:omni:params:1.0:UserAttribute":{"department":"media"}}'
 
 # 3. Create a branch (branches are models of kind BRANCH; the response id is the branchId)
 curl -L -X POST "$OMNI_BASE_URL/api/v1/models" \
