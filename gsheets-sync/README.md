@@ -1,6 +1,19 @@
-# Google Sheets ↔ Omni Tile Sync
+# Google Sheets ↔ Omni
 
-`OmniSync.gs` is a Google Apps Script that pulls data from one or more Omni dashboard tiles into specific cells of a Google Sheet. Refresh on demand from the **Omni** menu, or on a schedule via a time-driven trigger.
+Two Google Apps Scripts for moving Omni data into Google Sheets. They are independent — install either or both.
+
+| Script | Use it when | Docs |
+|--------|-------------|------|
+| [`OmniSync.gs`](./OmniSync.gs) | You know the dashboard tile and the cell it belongs in. Config lives in a sheet tab; refresh on demand or on a schedule. | below |
+| [`OmniTopicSync.gs`](./OmniTopicSync.gs) | You want users to explore. Lists the Omni **topics each signed-in user is entitled to**, lets them pick fields and filters in a sidebar, and pulls up to 50,000 rows. | [OmniTopicSync.README.md](./OmniTopicSync.README.md) |
+
+The two differ in how they authenticate. `OmniSync.gs` uses one API key for everyone and returns the same data to every viewer. `OmniTopicSync.gs` uses an organization key but resolves the signed-in Google user to their Omni account, so the topic list and the rows returned differ per person. If you only need a fixed tile in a fixed cell, `OmniSync.gs` is the simpler choice.
+
+---
+
+# OmniSync.gs — tile sync
+
+`OmniSync.gs` pulls data from one or more Omni dashboard tiles into specific cells of a Google Sheet. Refresh on demand from the **Omni** menu, or on a schedule via a time-driven trigger.
 
 ## Setup
 

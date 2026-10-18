@@ -8,7 +8,7 @@ Each subdirectory is a self-contained script with its own setup README.
 
 | Directory | What it does |
 |-----------|--------------|
-| [`gsheets-sync/`](./gsheets-sync) | Pull data from specific Omni dashboard tiles into specific cells of a Google Sheet. Sheet-driven config, on-demand or scheduled refresh. |
+| [`gsheets-sync/`](./gsheets-sync) | Pull data from specific Omni dashboard tiles into specific cells of a Google Sheet. Sheet-driven config, on-demand or scheduled refresh. Also includes a permission-aware Omni **topic** explorer: browse the topics you're entitled to, pick fields and filters, and pull the results into the sheet. |
 
 ## Contributing
 

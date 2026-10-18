@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html>
+<head>
+<base target="_top">
+<style>
+  :root { --line: #dadce0; --muted: #5f6368; --accent: #1a73e8; --bg: #fff; }
+  body { font-family: Roboto, Arial, sans-serif; font-size: 13px; margin: 0; padding: 10px; color: #202124; }
+  h4 { margin: 14px 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  select, input[type=text], input[type=date] { width: 100%; box-sizing: border-box; padding: 5px; border: 1px solid var(--line); border-radius: 4px; font-size: 13px; }
+  button { font-family: inherit; font-size: 12px; padding: 5px 10px; border: 1px solid var(--line); background: #f8f9fa; border-radius: 4px; cursor: pointer; }
+  button:hover:not(:disabled) { background: #f1f3f4; }
+  button:disabled { opacity: .5; cursor: default; }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); font-size: 13px; padding: 8px 14px; width: 100%; }
+  button.link { border: none; background: none; color: var(--accent); padding: 2px 4px; }
+  .row { display: flex; gap: 6px; align-items: center; }
+  .desc { color: var(--muted); font-size: 11px; margin: 4px 0 0; line-height: 1.4; }
+  .view { border: 1px solid var(--line); border-radius: 4px; margin-bottom: 6px; }
+  .view > summary { padding: 6px 8px; cursor: pointer; font-weight: 500; background: #f8f9fa; border-radius: 4px; }
+  .view .body { padding: 4px 8px 8px; }
+  .fld { display: flex; align-items: center; gap: 5px; padding: 2px 0; }
+  .fld label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fld select { width: auto; flex: 0 0 auto; font-size: 11px; padding: 1px; }
+  .badge { font-size: 9px; color: var(--muted); border: 1px solid var(--line); border-radius: 2px; padding: 0 3px; }
+  .filter { border: 1px solid var(--line); border-radius: 4px; padding: 6px; margin-bottom: 6px; }
+  .filter .row { margin-bottom: 4px; }
+  .filter.from-topic { border-left: 3px solid var(--accent); }
+  #status { margin-top: 8px; padding: 6px; border-radius: 4px; font-size: 12px; display: none; line-height: 1.4; }
+  #status.err { background: #fce8e6; color: #c5221f; display: block; }
+  #status.ok { background: #e6f4ea; color: #137333; display: block; }
+  #status.busy { background: #e8f0fe; color: #174ea6; display: block; }
+  .sticky { position: sticky; bottom: 0; background: var(--bg); padding-top: 8px; border-top: 1px solid var(--line); }
+  .count { color: var(--muted); font-size: 11px; }
+</style>
+</head>
+<body>
+
+<label for="topic"><strong>Topic</strong></label>
+<select id="topic"></select>
+<p class="desc" id="topicDesc"></p>
+
+<h4>Filters <span class="count" id="filterNote"></span></h4>
+<div id="alwaysFilters" class="desc"></div>
+<div id="filters"></div>
+<button id="addFilter">+ Add filter</button>
+
+<h4>Fields <span class="count" id="fieldCount"></span></h4>
+<div class="row">
+  <input type="text" id="search" placeholder="Filter field names…">
+</div>
+<div class="row" style="margin:6px 0;">
+  <button class="link" id="selAll">Select all</button>
+  <button class="link" id="selNone">Clear all</button>
+  <button class="link" id="selMeasures">Measures only</button>
+</div>
+<div id="fields"></div>
+
+<div class="sticky">
+  <p class="desc" id="target"></p>
+  <button class="primary" id="run">Run &amp; write to sheet</button>
+  <div id="status"></div>
+</div>
+
+<script>
+var PRESELECT = <?!= JSON.stringify(preselectTopic) ?>;
+var state = { topics: [], groups: [], filterKinds: {}, rowLimit: 50000, fieldsByRef: {} };
+
+function el(id) { return document.getElementById(id); }
+
+function setStatus(msg, cls) {
+  var s = el('status');
+  s.textContent = msg || '';
+  s.className = msg ? (cls || '') : '';
+}
+
+function busy(on, msg) {
+  el('run').disabled = on;
+  el('topic').disabled = on;
+  if (on) setStatus(msg || 'Working…', 'busy');
+}
+
+// --- bootstrap ------------------------------------------------------------
+
+busy(true, 'Checking which topics you can access…');
+google.script.run
+  .withSuccessHandler(onBootstrap)
+  .withFailureHandler(onFail)
+  .getPickerBootstrap(PRESELECT);
+
+function onBootstrap(data) {
+  state.topics = data.topics || [];
+  state.rowLimit = data.rowLimit;
+  var sel = el('topic');
+  sel.innerHTML = '';
+
+  if (!state.topics.length) {
+    sel.innerHTML = '<option value="">No topics available to you</option>';
+    busy(false);
+    setStatus('Omni reports no topics you can access in this model.', 'err');
+    return;
+  }
+
+  state.topics.forEach(function (t) {
+    var o = document.createElement('option');
+    o.value = t.name;
+    o.textContent = t.label || t.name;
+    sel.appendChild(o);
+  });
+  sel.value = data.selected || state.topics[0].name;
+  busy(false);
+  setStatus('');
+  loadTopic();
+}
+
+el('topic').addEventListener('change', loadTopic);
+
+function loadTopic() {
+  var name = el('topic').value;
+  if (!name) return;
+  el('fields').innerHTML = '';
+  el('filters').innerHTML = '';
+  el('fieldCount').textContent = '';
+  busy(true, 'Loading fields…');
+  google.script.run
+    .withSuccessHandler(onFields)
+    .withFailureHandler(onFail)
+    .getTopicFieldGroups(name);
+}
+
+function onFields(data) {
+  state.groups = data.groups || [];
+  state.filterKinds = data.filterKinds || {};
+  state.fieldsByRef = {};
+  state.limitedMetadata = !!data.limitedMetadata;
+  el('topicDesc').textContent = data.description || '';
+
+  var total = 0;
+  var html = '';
+  state.groups.forEach(function (g, gi) {
+    var body = '';
+    function render(f, kind) {
+      state.fieldsByRef[f.ref] = f;
+      total++;
+      var grainSel = '';
+      if (f.grains && f.grains.length) {
+        // Some time dimensions exist only as grain variants, with no bare field
+        // to query — offer "raw" only when Omni actually exposes it.
+        grainSel = '<select class="grain" data-ref="' + f.ref + '">' +
+          (f.hasRaw ? '<option value="">raw</option>' : '') +
+          f.grains.map(function (gr) { return '<option value="' + gr + '">' + gr + '</option>'; }).join('') +
+          '</select>';
+      }
+      body += '<div class="fld" data-name="' + (f.label + ' ' + f.name).toLowerCase() + '" data-kind="' + kind + '">' +
+        '<input type="checkbox" class="fchk" data-ref="' + f.ref + '" id="c_' + cssId(f.ref) + '">' +
+        '<label for="c_' + cssId(f.ref) + '" title="' + esc(f.description || f.ref) + '">' + esc(f.label) + '</label>' +
+        grainSel +
+        '<span class="badge">' + (kind === 'm' ? 'measure' : f.dataType || 'dim') + '</span>' +
+        '</div>';
+    }
+    g.dimensions.forEach(function (f) { render(f, 'd'); });
+    g.measures.forEach(function (f) { render(f, 'm'); });
+
+    var gTotal = g.dimensions.length + g.measures.length;
+    html += '<details class="view"' + (gi === 0 ? ' open' : '') + '>' +
+      '<summary>' + esc(g.label) + ' <span class="count" data-total="' + gTotal +
+      '">(0 of ' + gTotal + ' selected)</span></summary>' +
+      '<div class="body">' +
+      '<button class="link vsel" data-g="' + gi + '">all</button>' +
+      '<button class="link vclr" data-g="' + gi + '">none</button>' +
+      body + '</div></details>';
+  });
+
+  el('fields').innerHTML = html;
+  el('fieldCount').textContent = '(' + total + ')';
+
+  Array.prototype.forEach.call(document.querySelectorAll('.vsel'), function (b) {
+    b.addEventListener('click', function () { toggleGroup(b.getAttribute('data-g'), true); });
+  });
+  Array.prototype.forEach.call(document.querySelectorAll('.vclr'), function (b) {
+    b.addEventListener('click', function () { toggleGroup(b.getAttribute('data-g'), false); });
+  });
+
+  // Checkbox changes anywhere in the field list refresh the per-view counts.
+  el('fields').addEventListener('change', function (ev) {
+    if (ev.target && ev.target.classList.contains('fchk')) updateCounts();
+  });
+
+  var tab = (el('topic').options[el('topic').selectedIndex] || {}).textContent;
+  el('target').textContent = 'Writes to "' + tab + '-[SOURCE]", clearing whatever is there now.';
+
+  prefillFilters(data.defaultFilters || []);
+  renderAlwaysFilters(data.alwaysFilters || []);
+  updateCounts();
+
+  busy(false);
+  setStatus(state.limitedMetadata
+    ? 'Field types are unavailable for this topic (the API key cannot read it), so filters ask you to pick a type. Selecting fields and running the query work normally.'
+    : '', state.limitedMetadata ? 'busy' : '');
+}
+
+// Shows "(n of N selected)" per view, and the overall tally next to Fields.
+function updateCounts() {
+  var sel = 0, tot = 0;
+  Array.prototype.forEach.call(document.querySelectorAll('#fields details.view'), function (d) {
+    var boxes = d.querySelectorAll('.fchk');
+    var n = d.querySelectorAll('.fchk:checked').length;
+    var span = d.querySelector('summary .count');
+    span.textContent = '(' + n + ' of ' + boxes.length + ' selected)';
+    span.style.fontWeight = n ? '600' : 'normal';
+    sel += n; tot += boxes.length;
+  });
+  el('fieldCount').textContent = tot ? '(' + sel + ' of ' + tot + ' selected)' : '';
+}
+
+// default_filters from the topic, pre-populated as ordinary editable rows.
+function prefillFilters(defaults) {
+  el('filters').innerHTML = '';
+  defaults.forEach(function (d) { if (state.fieldsByRef[d.ref]) addFilterRow(d); });
+  var skipped = defaults.filter(function (d) { return !state.fieldsByRef[d.ref]; });
+  var parts = [];
+  if (defaults.length - skipped.length) parts.push(defaults.length - skipped.length + ' from the topic');
+  if (skipped.length) parts.push(skipped.length + ' on hidden fields, not shown');
+  el('filterNote').textContent = parts.length ? '(' + parts.join('; ') + ')' : '';
+}
+
+function renderAlwaysFilters(refs) {
+  el('alwaysFilters').textContent = refs.length
+    ? 'Always applied by Omni and not editable here: ' + refs.join(', ')
+    : '';
+}
+
+function toggleGroup(gi, on) {
+  var nodes = document.querySelectorAll('#fields details.view')[Number(gi)]
+    .querySelectorAll('.fchk');
+  Array.prototype.forEach.call(nodes, function (c) {
+    if (c.closest('.fld').style.display !== 'none') c.checked = on;
+  });
+  updateCounts();
+}
+
+// --- field controls -------------------------------------------------------
+
+el('search').addEventListener('input', function () {
+  var q = el('search').value.toLowerCase().trim();
+  Array.prototype.forEach.call(document.querySelectorAll('.fld'), function (d) {
+    d.style.display = (!q || d.getAttribute('data-name').indexOf(q) !== -1) ? '' : 'none';
+  });
+});
+
+el('selAll').addEventListener('click', function () { setAllVisible(true, null); });
+el('selNone').addEventListener('click', function () { setAllVisible(false, null); });
+el('selMeasures').addEventListener('click', function () { setAllVisible(false, null); setAllVisible(true, 'm'); });
+
+function setAllVisible(on, kind) {
+  Array.prototype.forEach.call(document.querySelectorAll('.fld'), function (d) {
+    if (d.style.display === 'none') return;
+    if (kind && d.getAttribute('data-kind') !== kind) return;
+    d.querySelector('.fchk').checked = on;
+  });
+  updateCounts();
+}
+
+// --- filters --------------------------------------------------------------
+
+el('addFilter').addEventListener('click', function () { addFilterRow(); });
+
+// `preset` is a row from the topic's default_filters; omitted for a blank row.
+function addFilterRow(preset) {
+  var refs = Object.keys(state.fieldsByRef);
+  if (!refs.length) return;
+
+  var wrap = document.createElement('div');
+  wrap.className = 'filter';
+  wrap.innerHTML =
+    '<div class="row"><select class="ffield">' +
+      refs.map(function (r) {
+        var f = state.fieldsByRef[r];
+        return '<option value="' + r + '">' + esc(f.label) + '</option>';
+      }).join('') +
+    '</select><button class="link fdel">✕</button></div>' +
+    '<div class="row"><select class="ftype" style="display:none">' +
+      '<option value="string">text</option><option value="number">number</option>' +
+      '<option value="date">date</option><option value="boolean">boolean</option></select>' +
+      '<select class="fkind"></select>' +
+      '<label title="Invert this condition"><input type="checkbox" class="fneg"> not</label></div>' +
+    '<div class="row fvals"></div>';
+
+  el('filters').appendChild(wrap);
+  wrap.querySelector('.fdel').addEventListener('click', function () {
+    wrap.remove();
+    if (!el('filters').children.length) el('filterNote').textContent = '';
+  });
+  wrap.querySelector('.ffield').addEventListener('change', function () { syncKinds(wrap); });
+  wrap.querySelector('.ftype').addEventListener('change', function () { syncKinds(wrap); });
+  wrap.querySelector('.fkind').addEventListener('change', function () { syncValues(wrap); });
+
+  if (preset) {
+    wrap.querySelector('.ffield').value = preset.ref;
+    var f = state.fieldsByRef[preset.ref];
+    if (f && f.typeUnknown && preset.filterType) wrap.querySelector('.ftype').value = preset.filterType;
+  }
+  syncKinds(wrap);
+
+  if (preset) {
+    var kindSel = wrap.querySelector('.fkind');
+    // Only adopt the topic's operator if it is valid for the resolved type.
+    for (var i = 0; i < kindSel.options.length; i++) {
+      if (kindSel.options[i].value === preset.kind) { kindSel.value = preset.kind; break; }
+    }
+    syncValues(wrap);
+    wrap.querySelector('.fneg').checked = !!preset.negate;
+    var ci = wrap.querySelector('.fci');
+    if (ci) ci.checked = preset.caseInsensitive !== false;
+    var inputs = wrap.querySelectorAll('.fv');
+    if (inputs.length === 1 && preset.values && preset.values.length) {
+      inputs[0].value = preset.values.join(', ');
+    } else {
+      for (var j = 0; j < inputs.length; j++) {
+        if (preset.values && preset.values[j] !== undefined) inputs[j].value = preset.values[j];
+      }
+    }
+    wrap.classList.add('from-topic');
+    wrap.title = "Pre-filled from this topic's default_filters in Omni. Edit or remove it like any other filter.";
+  }
+}
+
+// A field's own data type when Omni reported one, otherwise whatever type the
+// user picked in the filter row.
+function effType(wrap, f) {
+  var sel = wrap.querySelector('.ftype');
+  sel.style.display = f.typeUnknown ? '' : 'none';
+  return f.typeUnknown ? sel.value : f.filterType;
+}
+
+function syncKinds(wrap) {
+  var f = state.fieldsByRef[wrap.querySelector('.ffield').value];
+  var kinds = (state.filterKinds[effType(wrap, f)] || []).slice();
+  kinds.push('IS_NULL', 'IS_NOT_NULL');
+  wrap.querySelector('.fkind').innerHTML = kinds.map(function (k) {
+    return '<option value="' + k + '">' + k.replace(/_/g, ' ').toLowerCase() + '</option>';
+  }).join('');
+  syncValues(wrap);
+}
+
+function syncValues(wrap) {
+  var f = state.fieldsByRef[wrap.querySelector('.ffield').value];
+  var t = effType(wrap, f);
+  var kind = wrap.querySelector('.fkind').value;
+  var vals = wrap.querySelector('.fvals');
+
+  if (kind === 'IS_NULL' || kind === 'IS_NOT_NULL' || kind === 'IS_EMPTY') {
+    vals.innerHTML = '<span class="desc">No value needed.</span>';
+    return;
+  }
+  if (t === 'boolean') {
+    vals.innerHTML = '<select class="fv"><option value="true">true</option><option value="false">false</option></select>';
+    return;
+  }
+  var type = t === 'date' ? 'date' : 'text';
+  if (kind === 'BETWEEN') {
+    vals.innerHTML = '<input type="' + type + '" class="fv" placeholder="from"> ' +
+                     '<input type="' + type + '" class="fv" placeholder="to">';
+    return;
+  }
+  var hint = t === 'string' ? 'value (comma-separated for several)' : 'value';
+  vals.innerHTML = '<input type="' + type + '" class="fv" placeholder="' + hint + '">' +
+    (t === 'string'
+      ? '<label title="Ignore capitalization"><input type="checkbox" class="fci" checked> aA</label>'
+      : '');
+}
+
+function collectFilters() {
+  var out = [];
+  Array.prototype.forEach.call(document.querySelectorAll('#filters .filter'), function (w) {
+    var ref = w.querySelector('.ffield').value;
+    var f = state.fieldsByRef[ref];
+    var kind = w.querySelector('.fkind').value;
+    var t = effType(w, f);
+    var values = [];
+    Array.prototype.forEach.call(w.querySelectorAll('.fv'), function (i) {
+      if (i.value === '') return;
+      if (t === 'string' && kind !== 'BETWEEN') {
+        i.value.split(',').forEach(function (p) { if (p.trim()) values.push(p.trim()); });
+      } else {
+        values.push(i.value);
+      }
+    });
+    var ci = w.querySelector('.fci');
+    out.push({
+      ref: ref,
+      filterType: t,
+      kind: kind,
+      values: values,
+      negate: w.querySelector('.fneg').checked,
+      caseInsensitive: ci ? ci.checked : true
+    });
+  });
+  return out;
+}
+
+// --- run ------------------------------------------------------------------
+
+el('run').addEventListener('click', function () {
+  var fields = [];
+  Array.prototype.forEach.call(document.querySelectorAll('.fchk'), function (c) {
+    if (!c.checked) return;
+    var ref = c.getAttribute('data-ref');
+    var g = document.querySelector('.grain[data-ref="' + cssEsc(ref) + '"]');
+    fields.push(g && g.value ? ref + '[' + g.value + ']' : ref);
+  });
+
+  if (!fields.length) {
+    setStatus('Select at least one field first.', 'err');
+    return;
+  }
+
+  var topicName = el('topic').value;
+  var label = el('topic').options[el('topic').selectedIndex].textContent;
+
+  busy(true, 'Running query in Omni as you…');
+  google.script.run
+    .withSuccessHandler(function (r) {
+      busy(false);
+      setStatus(
+        'Wrote ' + r.dataRows.toLocaleString() + ' row(s) × ' + r.columns +
+        ' col(s) to "' + r.sheetName + '" in ' + (r.elapsedMs / 1000).toFixed(1) + 's.' +
+        (r.truncated ? ' Hit the ' + state.rowLimit.toLocaleString() + '-row limit — add filters to narrow it.' : ''),
+        r.truncated ? 'err' : 'ok');
+    })
+    .withFailureHandler(onFail)
+    .runTopicExtract({ topic: topicName, label: label, fields: fields, filters: collectFilters() });
+});
+
+function onFail(err) {
+  busy(false);
+  setStatus((err && err.message) ? err.message : String(err), 'err');
+}
+
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+  });
+}
+function cssId(s) { return String(s).replace(/[^a-zA-Z0-9_-]/g, '_'); }
+function cssEsc(s) { return String(s).replace(/(["\\])/g, '\\$1'); }
+</script>
+</body>
+</html>
